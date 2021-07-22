@@ -11,11 +11,31 @@ of "Contents" is also loose and depends on the API.
 
 from abc import ABC, abstractmethod
 import requests
+import googlesearch
+import fire
+import bs4
+import rich
+import rich.markup
+import html2text
+import json
 from typing import Any, Dict, List
 
 from parlai.core.opt import Opt
 from parlai.utils import logging
 
+
+requests.packages.urllib3.disable_warnings()
+
+import ssl
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    # Legacy Python that doesn't verify HTTPS certificates by default
+    pass
+else:
+    # Handle target environment that doesn't support HTTPS verification
+    ssl._create_default_https_context = _create_unverified_https_context
 
 CONTENT = 'content'
 DEFAULT_NUM_TO_RETRIEVE = 5
@@ -81,6 +101,7 @@ class SearchEngineRetriever(RetrieverAPI):
     def __init__(self, opt: Opt):
         super().__init__(opt=opt)
         self.server_address = self._validate_server(opt.get('search_server'))
+        self.use_local = False 
 
     def _query_search_server(self, query_term, n):
         server = self.server_address
@@ -93,10 +114,75 @@ class SearchEngineRetriever(RetrieverAPI):
         logging.error(
             f'Failed to retrieve data from server! Search server returned status {resp_status}'
         )
+    
+    def _get_and_parse(self, url: str) -> Dict[str, str]:
+    
+        resp = requests.get(url)
+        try:
+            resp = requests.get(url)
+        except Exception as e:
+            return None
+        else:
+            page = resp.content
+    
+        ###########################################################################
+        # Prepare the title
+        ###########################################################################
+        output_dict = dict(title="", content="", url=url)
+        soup = bs4.BeautifulSoup(page, features="lxml")
+        pre_rendered = soup.find("title")
+        output_dict["title"] = (
+            pre_rendered.renderContents().decode() if pre_rendered else None
+        )
+        output_dict["title"] = output_dict["title"].replace("\n", "").replace("\r", "")
+    
+        ###########################################################################
+        # Prepare the content
+        ###########################################################################
+        text_maker = html2text.HTML2Text()
+        text_maker.ignore_links = True
+        text_maker.ignore_tables = True
+        text_maker.ignore_images = True
+        text_maker.ignore_emphasis = True
+        text_maker.single_line = True
+        output_dict["content"]  = text_maker.handle(page.decode("utf-8", errors="ignore"))
+        
+        ###########################################################################
+        # Log it
+        ###########################################################################
+        title_str = (f"`{rich.markup.escape(output_dict['title'])}`" 
+            if output_dict["title"] else '<No Title>'
+        )
+        print(
+            f"title: {title_str}",
+            f"url: {rich.markup.escape(output_dict['url'])}",
+            f"content: {len(output_dict['content'])}"
+        )
+    
+        return output_dict
+
+
+    def _query_local_search_server(self, query_term, n):
+        urls = googlesearch.search(query_term, num=n, stop=n)
+        content = []
+        for url in urls:
+            if len(content) >= n:
+                break
+            maybe_content = self._get_and_parse(url)
+            if maybe_content:
+                content.append(maybe_content)
+
+        content = content[:n]  # Redundant [:n]
+        output = dict(response=content)
+        return output.get('response', None)
 
     def _validate_server(self, address):
         if not address:
             raise ValueError('Must provide a valid server for search')
+        if address.startswith('local_google'):
+            logging.warning('Using local_google search')
+            self.use_local = True
+            return address
         if address.startswith('http://') or address.startswith('https://'):
             return address
         PROTOCOL = 'http://'
@@ -108,7 +194,10 @@ class SearchEngineRetriever(RetrieverAPI):
             return None
 
         retrieved_docs = []
-        search_server_resp = self._query_search_server(search_query, num_ret)
+        if (self.use_local):
+            search_server_resp = self._query_local_search_server(search_query, num_ret)
+        else:
+            search_server_resp = self._query_search_server(search_query, num_ret)
         if not search_server_resp:
             logging.warning(
                 f'Server search did not produce any results for "{search_query}" query.'
@@ -130,3 +219,25 @@ class SearchEngineRetriever(RetrieverAPI):
     ) -> List[Dict[str, Any]]:
         # TODO: update the server (and then this) for batch responses.
         return [self._retrieve_single(q, num_ret) for q in queries]
+
+class LocalSearchTest:
+    def test_parser(self, url):
+        print(_get_and_parse(url))
+
+    def test_server(self, query, n):
+        print(f"Query: `{query}`")
+        print(f"n: {n}")
+
+        retriever = SearchEngineRetriever(
+            dict(
+                search_server="local_google",
+                skip_retrieval_token=False,
+            )
+        )
+        retriever._validate_server("local_google")
+        print("Retrieving one.")
+        print(retriever._retrieve_single(query, n))
+        print("Done.")
+
+if __name__ == "__main__":
+    fire.Fire(LocalSearchTest)
