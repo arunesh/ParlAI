@@ -137,6 +137,9 @@ class SearchEngineRetriever(RetrieverAPI):
         output_dict["title"] = (
             pre_rendered.renderContents().decode() if pre_rendered else None
         )
+        if (output_dict["title"] is None):
+            output_dict["title"] = "None"
+
         output_dict["title"] = output_dict["title"].replace("\n", "").replace("\r", "")
     
         ###########################################################################
