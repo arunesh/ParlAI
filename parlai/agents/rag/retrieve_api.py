@@ -102,6 +102,9 @@ class SearchEngineRetriever(RetrieverAPI):
         super().__init__(opt=opt)
         self.server_address = self._validate_server(opt.get('search_server'))
         self.use_local = False 
+        if self.server_address.startswith('local_google'):
+            logging.warning('Using local_google search')
+            self.use_local = True
 
     def _query_search_server(self, query_term, n):
         server = self.server_address
