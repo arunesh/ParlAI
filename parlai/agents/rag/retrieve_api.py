@@ -216,6 +216,7 @@ class SearchEngineRetriever(RetrieverAPI):
             url = rd.get('url', '')
             title = rd.get('title', '')
             sentences = [s.strip() for s in rd[CONTENT].split('\n') if s and s.strip()]
+            print(sentences)
             retrieved_docs.append(
                 self.create_content_dict(url=url, title=title, content=sentences)
             )
